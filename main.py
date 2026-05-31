@@ -1,4 +1,5 @@
 import os
+import time
 import pandas as pd
 import datetime
 import concurrent.futures
@@ -110,8 +111,17 @@ def get_universe_from_csv(filepath):
 # FETCH & CALCULATE (5-PHASE LOGIC)
 # ==========================================
 def fetch_and_calculate(symbol):
+    for attempt in range(3):  # Retry up to 3 times
+        try:
+            time.sleep(0.3)  # Small delay to avoid rate limiting
+            df = yf.download(symbol, period="10y", interval="1mo", progress=False)
+            break  # Success, exit retry loop
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s
+                continue
+            return {"Symbol": symbol.replace('.NS', ''), "Status": f"Error: {e}", "Close": 0.0, "Bench_Low": "-"}
     try:
-        df = yf.download(symbol, period="10y", interval="1mo", progress=False)
         if df.empty:
             return {"Symbol": symbol.replace('.NS', ''), "Status": "No Data", "Close": 0.0, "Bench_Low": "-"}
         if isinstance(df.columns, pd.MultiIndex):
@@ -162,6 +172,7 @@ def fetch_and_calculate(symbol):
         return {"Symbol": symbol.replace('.NS', ''), "Status": f"Error: {e}", "Close": 0.0, "Bench_Low": "-"}
 
 
+
 # ==========================================
 # STREAMLIT UI
 # ==========================================
@@ -190,7 +201,7 @@ if st.button("🚀 Start Screener"):
 
     total = len(symbols)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         futures = {executor.submit(fetch_and_calculate, s): s for s in symbols}
         completed = 0
         for f in concurrent.futures.as_completed(futures):
