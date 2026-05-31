@@ -1,4 +1,5 @@
 flet
+flet-web
 pandas
 yfinance
 openpyxl
