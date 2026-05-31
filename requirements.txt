@@ -1,7 +1,4 @@
-flet
-flet-web
+streamlit
 pandas
 yfinance
 openpyxl
-fastapi
-uvicorn
