@@ -1,5 +1,4 @@
 flet
 pandas
-pandas-ta
 yfinance
 openpyxl

@@ -1,7 +1,6 @@
 import os
 import time
 import pandas as pd
-import pandas_ta as ta
 import datetime
 import sys
 import traceback
@@ -15,6 +14,45 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 if not os.path.exists(ASSETS_DIR):
     os.makedirs(ASSETS_DIR)
+
+# ==========================================
+# INDICATOR MATH (No pandas-ta or numba needed)
+# ==========================================
+def calc_rsi(series, length=14):
+    delta = series.diff()
+    up = delta.clip(lower=0)
+    down = -1 * delta.clip(upper=0)
+    ema_up = up.ewm(com=length-1, adjust=False).mean()
+    ema_down = down.ewm(com=length-1, adjust=False).mean()
+    rs = ema_up / ema_down
+    return 100 - (100 / (1 + rs))
+
+def calc_supertrend(high, low, close, period=7, multiplier=1):
+    tr1 = high - low
+    tr2 = (high - close.shift()).abs()
+    tr3 = (low - close.shift()).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1/period, adjust=False).mean()
+
+    hl2 = (high + low) / 2
+    final_upperband = hl2 + (multiplier * atr)
+    final_lowerband = hl2 - (multiplier * atr)
+    
+    supertrend_dir = pd.Series(1, index=close.index) 
+    
+    for i in range(1, len(close)):
+        if close.iloc[i] > final_upperband.iloc[i-1]:
+            supertrend_dir.iloc[i] = 1
+        elif close.iloc[i] < final_lowerband.iloc[i-1]:
+            supertrend_dir.iloc[i] = -1
+        else:
+            supertrend_dir.iloc[i] = supertrend_dir.iloc[i-1]
+            if supertrend_dir.iloc[i] == 1 and final_lowerband.iloc[i] < final_lowerband.iloc[i-1]:
+                final_lowerband.iloc[i] = final_lowerband.iloc[i-1]
+            if supertrend_dir.iloc[i] == -1 and final_upperband.iloc[i] > final_upperband.iloc[i-1]:
+                final_upperband.iloc[i] = final_upperband.iloc[i-1]
+                
+    return supertrend_dir
 
 # ==========================================
 # 1. SYMBOL MASTER LIST MATCHING (YAHOO FINANCE)
@@ -60,20 +98,16 @@ def fetch_and_calculate(symbol, log_callback):
         if len(df) < 20:
             return {"Symbol": symbol, "Status": "Insufficient Data", "Close": float(df.iloc[-1]['Close']), "Bench_Low": "-"}
 
-        df['RSI_14'] = ta.rsi(df['Close'], length=14)
-        bb = ta.bbands(df['Close'], length=20, std=2)
-        if bb is None or bb.empty:
-            return {"Symbol": symbol, "Status": "BB Calc Failed", "Close": float(df.iloc[-1]['Close']), "Bench_Low": "-"}
-            
-        upper_bb_col   = [c for c in bb.columns if c.startswith('BBU')][0]
-        df['Upper_BB'] = bb[upper_bb_col]
+        # Use our custom Math indicators instead of pandas-ta
+        df['RSI_14'] = calc_rsi(df['Close'], length=14)
+        
+        # Bollinger Bands Upper
+        basis = df['Close'].rolling(window=20).mean()
+        dev = 2 * df['Close'].rolling(window=20).std()
+        df['Upper_BB'] = basis + dev
 
-        st = ta.supertrend(df['High'], df['Low'], df['Close'], period=7, multiplier=1)
-        if st is None or st.empty:
-            return {"Symbol": symbol, "Status": "ST Calc Failed", "Close": float(df.iloc[-1]['Close']), "Bench_Low": "-"}
-            
-        st_dir_col   = [c for c in st.columns if c.startswith('SUPERTd')][0]
-        df['ST_Dir'] = st[st_dir_col]
+        # Supertrend
+        df['ST_Dir'] = calc_supertrend(df['High'], df['Low'], df['Close'], period=7, multiplier=1)
 
         df['Prev_12M_High'] = df['High'].shift(1).rolling(window=12).max()
         df.dropna(inplace=True)
@@ -120,7 +154,6 @@ def main(page: ft.Page):
     page.scroll = ft.ScrollMode.ADAPTIVE
     page.padding = 20
 
-    # UI Widgets
     title = ft.Text("☁️ Cloud Monthly Screener", size=26, weight=ft.FontWeight.BOLD, color=ft.Colors.PURPLE_300)
     subtitle = ft.Text("Runs 24/7. Results can be downloaded to your phone.", size=14, color=ft.Colors.GREY_400)
     
@@ -130,7 +163,6 @@ def main(page: ft.Page):
     
     download_btn = ft.ElevatedButton("📥 Download Excel Results", bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE, height=50, visible=False)
     
-    # Logs and Results UI
     log_box = ft.ListView(expand=True, spacing=5, auto_scroll=True, height=180)
     log_container = ft.Container(
         content=log_box,
@@ -190,7 +222,6 @@ def main(page: ft.Page):
             progress_status.value = f"Processing 0/{total_symbols} stocks..."
             page.update()
 
-            # Execute calculations
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                 futures = {executor.submit(fetch_and_calculate, s, write_log): s for s in symbols}
                 completed_count = 0
@@ -203,7 +234,6 @@ def main(page: ft.Page):
 
             write_log("💾 Saving screener results...")
             
-            # Save files to the assets folder so they can be downloaded
             excel_filename = f"Screener2_YF_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx"
             output_excel = os.path.join(ASSETS_DIR, excel_filename)
             
@@ -217,7 +247,6 @@ def main(page: ft.Page):
             m_screen_path = os.path.join(ASSETS_DIR, "M_screen.csv")
             df_watchlist.to_csv(m_screen_path, index=False)
             
-            # Setup Download button
             download_btn.on_click = lambda e: page.launch_url(f"/{excel_filename}")
             download_btn.visible = True
 
@@ -293,4 +322,3 @@ if __name__ == "__main__":
     sys.stdout.reconfigure(encoding='utf-8')
     port = int(os.environ.get("PORT", 8550))
     ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=port, host="0.0.0.0", assets_dir="assets")
-
