@@ -2,3 +2,5 @@ flet
 pandas
 yfinance
 openpyxl
+fastapi
+uvicorn

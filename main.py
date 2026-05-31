@@ -318,7 +318,19 @@ def main(page: ft.Page):
         )
     )
 
+# ==========================================
+# 4. CLOUD DEPLOYMENT (FASTAPI)
+# ==========================================
+import flet.fastapi as flet_fastapi
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+import uvicorn
+
+app = FastAPI()
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+app.mount("/", flet_fastapi.app(main))
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding='utf-8')
     port = int(os.environ.get("PORT", 8550))
-    ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=port, host="0.0.0.0", assets_dir="assets")
+    uvicorn.run(app, host="0.0.0.0", port=port)
